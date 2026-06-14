@@ -77,3 +77,55 @@ def add_vec_block_kernel(x_ptr, y_ptr, z_ptr, N0, N1, B0: tl.constexpr, B1: tl.c
 
     tl.store(z_ptr + z_offset, out, z_mask)
 ```
+
+### 5
+```
+@triton.jit
+def mul_relu_block_kernel(x_ptr, y_ptr, z_ptr, N0, N1, B0: tl.constexpr, B1: tl.constexpr):
+    pid_0 = tl.program_id(0)
+    pid_1 = tl.program_id(1)
+
+    x_offset = pid_0*B0 + tl.arange(0, B0)
+    y_offset = pid_1*B1 + tl.arange(0, B1)
+
+    x_mask = x_offset < N0
+    y_mask = y_offset < N1
+    
+    x = tl.load(x_ptr + x_offset, x_mask)
+    y = tl.load(y_ptr + y_offset, y_mask)
+    
+    temp = y[:, None] * x
+    out = tl.where(temp > 0, temp, 0)
+    
+    z_mask = y_mask[:, None] & x_mask
+    z_offset = y_offset[:, None] * N0 + x_offset
+
+    tl.store(z_ptr + z_offset, out, z_mask)
+```
+
+### 6
+```
+@triton.jit
+def mul_relu_block_back_kernel(x_ptr, y_ptr, dz_ptr, dx_ptr, N0, N1, B0: tl.constexpr, B1: tl.constexpr):
+    pid_0 = tl.program_id(0)
+    pid_1 = tl.program_id(1)
+
+    x_offset = pid_0*B0 + tl.arange(0, B0)
+    y_offset = pid_1*B1 + tl.arange(0, B1)
+    
+    # 2D tile offset
+    # a neat way to index a B1xB0 tile from the N1xN0 tensor
+    mat_offset = y_offset[:, None] * N0 + x_offset[None, :]
+
+    y_mask = y_offset < N1
+    mask = (y_offset[:, None] < N1) & (x_offset[None, :] < N0)
+
+    x = tl.load(x_ptr + mat_offset, mask)
+    y = tl.load(y_ptr + y_offset, y_mask)
+    dz = tl.load(dz_ptr + mat_offset, mask)
+    
+    temp = x * y[:, None]
+    out = tl.where(temp > 0, dz * y[:, None], 0)
+    
+    tl.store(dx_ptr + mat_offset, out, mask)
+```
